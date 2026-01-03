@@ -319,37 +319,37 @@ public class RegistrationForm extends JFrame {
         StringBuilder errors = new StringBuilder();
         
         if (!ValidationUtil.isNotEmpty(username)) {
-            errors.append("Username is required.\\n");
+            errors.append("Username is required.\n");
         } else if (!ValidationUtil.isValidUsername(username)) {
-            errors.append("Username must be 3-20 characters and contain only letters, numbers, and underscores.\\n");
+            errors.append("Username must be 3-20 characters and contain only letters, numbers, and underscores.\n");
         }
-        
+
         if (!ValidationUtil.isNotEmpty(password)) {
-            errors.append("Password is required.\\n");
+            errors.append("Password is required.\n");
         } else if (!ValidationUtil.isValidPassword(password)) {
-            errors.append("Password must be at least 6 characters long.\\n");
+            errors.append("Password must be at least 8 characters, include upper, lower, number, and special character.\n");
         }
-        
+
         if (!password.equals(confirmPassword)) {
-            errors.append("Passwords do not match.\\n");
+            errors.append("Passwords do not match.\n");
         }
-        
+
         if (!ValidationUtil.isNotEmpty(fullName)) {
-            errors.append("Full name is required.\\n");
+            errors.append("Full name is required.\n");
         }
         
         if (!ValidationUtil.isNotEmpty(address)) {
-            errors.append("Address is required.\\n");
+            errors.append("Address is required.\n");
         }
         
         if (!ValidationUtil.isNotEmpty(email)) {
-            errors.append("Email is required.\\n");
+            errors.append("Email is required.\n");
         } else if (!ValidationUtil.isValidEmail(email)) {
-            errors.append("Invalid email format.\\n");
+            errors.append("Invalid email format.\n");
         }
         
         if (ValidationUtil.isNotEmpty(contactNumber) && !ValidationUtil.isValidPhone(contactNumber)) {
-            errors.append("Invalid phone number format.\\n");
+            errors.append("Invalid phone number format.\n");
         }
         
         if (ValidationUtil.isNotEmpty(birthday) && !ValidationUtil.isValidDate(birthday)) {

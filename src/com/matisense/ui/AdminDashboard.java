@@ -10,14 +10,22 @@ import com.matisense.model.User;
 import com.matisense.service.NotificationService;
 import com.matisense.util.ValidationUtil;
 import java.awt.*;
+import java.time.LocalDate;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.HashSet;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.Date;
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
+import javax.swing.table.TableRowSorter;
+import javax.swing.RowFilter;
 
 /**
  * Admin dashboard with reports and announcements management.
@@ -26,6 +34,14 @@ public class AdminDashboard extends JFrame {
     private static final Dimension DEFAULT_BUTTON_SIZE = new Dimension(150, 36);
     private static final Color PRIMARY_COLOR = new Color(21, 101, 192);
     private static final Color TABLE_HEADER = new Color(227, 242, 253);
+    private static final String[] REPORT_TYPES = new String[] {
+            "Infrastructure Issue",
+            "Security Concern",
+            "Environmental Problem",
+            "Noise Complaint",
+            "Public Service Request",
+            "Other"
+    };
 
     private final User currentUser;
     private final ReportDAO reportDAO;
@@ -36,6 +52,13 @@ public class AdminDashboard extends JFrame {
     private JTabbedPane tabbedPane;
     private JTable reportsTable;
     private DefaultTableModel reportsTableModel;
+    private TableRowSorter<DefaultTableModel> reportsSorter;
+    private JTextField searchField;
+    private JComboBox<String> statusFilter;
+    private JComboBox<String> dateFilter;
+    private JComboBox<String> typeFilter;
+    private JButton datePickerButton;
+    private JLabel datePickerLabel;
     private JTable announcementsTable;
     private DefaultTableModel announcementsTableModel;
     private JButton refreshButton;
@@ -49,6 +72,9 @@ public class AdminDashboard extends JFrame {
     private JButton annCloseButton;
     private JLabel welcomeLabel;
     private JLabel statsLabel;
+    private final Set<Integer> unopenedReportIds = new HashSet<>();
+    private final Set<Integer> openedReportIds = new HashSet<>();
+    private LocalDate specificDateFilter;
 
     private static class DashboardData {
         private final List<ReportRow> reportRows = new ArrayList<>();
@@ -65,7 +91,7 @@ public class AdminDashboard extends JFrame {
 
         private ReportRow(int reportId, String residentName, String reportType,
                 String location, String descriptionPreview,
-                String status, String createdAt) {
+                String status, String createdAt, String updatedAt) {
             this.rowData = new Object[] {
                     reportId,
                     residentName,
@@ -73,7 +99,8 @@ public class AdminDashboard extends JFrame {
                     location,
                     descriptionPreview,
                     status,
-                    createdAt
+                    createdAt,
+                    updatedAt
             };
         }
     }
@@ -107,7 +134,7 @@ public class AdminDashboard extends JFrame {
         tabbedPane.setBackground(Color.WHITE);
 
         reportsTableModel = new DefaultTableModel(new String[] {
-                "Report ID", "Resident", "Type", "Location", "Description", "Status", "Created At"
+                "Report ID", "Resident", "Type", "Location", "Summary", "Status", "Created At", "Updated At"
         }, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -115,6 +142,8 @@ public class AdminDashboard extends JFrame {
             }
         };
         reportsTable = new JTable(reportsTableModel);
+        reportsSorter = new TableRowSorter<>(reportsTableModel);
+        reportsTable.setRowSorter(reportsSorter);
         reportsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         reportsTable.getTableHeader().setReorderingAllowed(false);
         styleTable(reportsTable);
@@ -122,9 +151,10 @@ public class AdminDashboard extends JFrame {
         reportsTable.getColumnModel().getColumn(1).setPreferredWidth(140);
         reportsTable.getColumnModel().getColumn(2).setPreferredWidth(120);
         reportsTable.getColumnModel().getColumn(3).setPreferredWidth(200);
-        reportsTable.getColumnModel().getColumn(4).setPreferredWidth(260);
+        reportsTable.getColumnModel().getColumn(4).setPreferredWidth(200);
         reportsTable.getColumnModel().getColumn(5).setPreferredWidth(120);
         reportsTable.getColumnModel().getColumn(6).setPreferredWidth(150);
+        reportsTable.getColumnModel().getColumn(7).setPreferredWidth(160);
 
         announcementsTableModel = new DefaultTableModel(new String[] {
                 "ID", "Title", "Preview", "Created At", "Updated At"
@@ -159,6 +189,15 @@ public class AdminDashboard extends JFrame {
                 annRefreshButton, annCreateButton, annEditButton, annDeleteButton, annCloseButton);
         applyButtonTheme(refreshButton, updateStatusButton, notificationsButton, logoutButton,
                 annRefreshButton, annCreateButton, annEditButton, annDeleteButton, annCloseButton);
+
+        searchField = new JTextField(18);
+        statusFilter = new JComboBox<>(buildStatusFilterOptions());
+        dateFilter = new JComboBox<>(new String[] { "All Dates", "Today (New)", "Past", "Specific Date" });
+        typeFilter = new JComboBox<>(buildTypeFilterOptions());
+        datePickerButton = new JButton("Pick Date");
+        datePickerLabel = new JLabel("");
+        datePickerLabel.setFont(new Font("Arial", Font.PLAIN, 12));
+        datePickerLabel.setForeground(Color.DARK_GRAY);
     }
 
     private void setupLayout() {
@@ -192,6 +231,16 @@ public class AdminDashboard extends JFrame {
         JPanel reportsButtonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
         reportsButtonPanel.setOpaque(false);
         reportsButtonPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+        reportsButtonPanel.add(new JLabel("Search:"));
+        reportsButtonPanel.add(searchField);
+        reportsButtonPanel.add(new JLabel("Status:"));
+        reportsButtonPanel.add(statusFilter);
+        reportsButtonPanel.add(new JLabel("Date:"));
+        reportsButtonPanel.add(dateFilter);
+        reportsButtonPanel.add(datePickerButton);
+        reportsButtonPanel.add(datePickerLabel);
+        reportsButtonPanel.add(new JLabel("Type:"));
+        reportsButtonPanel.add(typeFilter);
         reportsButtonPanel.add(refreshButton);
         reportsButtonPanel.add(updateStatusButton);
         reportsPanel.add(reportsButtonPanel, BorderLayout.NORTH);
@@ -220,6 +269,11 @@ public class AdminDashboard extends JFrame {
     private void setupEventHandlers() {
         refreshButton.addActionListener(e -> refreshDashboardDataWithLoader("Refreshing reports..."));
 
+        searchField.getDocument().addDocumentListener(new SimpleFilterListener(this::applyReportFilters));
+        statusFilter.addActionListener(e -> applyReportFilters());
+        dateFilter.addActionListener(e -> applyReportFilters());
+        typeFilter.addActionListener(e -> applyReportFilters());
+        datePickerButton.addActionListener(e -> openDatePicker());
         updateStatusButton.addActionListener(e -> updateReportStatus());
         notificationsButton.addActionListener(e -> openNotifications());
         logoutButton.addActionListener(e -> logout());
@@ -315,7 +369,8 @@ public class AdminDashboard extends JFrame {
                     report.getLocation(),
                     preview,
                     report.getStatus().getDisplayName(),
-                    report.getFormattedCreatedAt()));
+                    report.getFormattedCreatedAt(),
+                    report.getFormattedUpdatedAt()));
 
             switch (report.getStatus()) {
                 case PENDING -> data.pendingCount++;
@@ -343,9 +398,20 @@ public class AdminDashboard extends JFrame {
 
     private void applyDashboardData(DashboardData data) {
         reportsTableModel.setRowCount(0);
+        List<ReportRow> unopenedRows = new ArrayList<>();
+        List<ReportRow> openedRows = new ArrayList<>();
         for (ReportRow row : data.reportRows) {
-            reportsTableModel.addRow(row.rowData);
+            int reportId = (int) row.rowData[0];
+            if (!openedReportIds.contains(reportId)) {
+                unopenedReportIds.add(reportId);
+                unopenedRows.add(row);
+            } else {
+                openedRows.add(row);
+            }
         }
+        unopenedRows.forEach(r -> reportsTableModel.addRow(r.rowData));
+        openedRows.forEach(r -> reportsTableModel.addRow(r.rowData));
+        applyReportFilters();
         updateStatsLabel(data);
         loadAnnouncements();
     }
@@ -369,8 +435,9 @@ public class AdminDashboard extends JFrame {
             return;
         }
 
-        int reportId = (int) reportsTableModel.getValueAt(selectedRow, 0);
-        String currentStatus = (String) reportsTableModel.getValueAt(selectedRow, 5);
+        int viewRow = reportsTable.convertRowIndexToModel(selectedRow);
+        int reportId = (int) reportsTableModel.getValueAt(viewRow, 0);
+        String currentStatus = (String) reportsTableModel.getValueAt(viewRow, 5);
 
         Report.ReportStatus[] statuses = Report.ReportStatus.values();
         String[] options = new String[statuses.length];
@@ -415,7 +482,10 @@ public class AdminDashboard extends JFrame {
                             "Status updated but resident notification failed: " + notifyEx.getMessage(),
                             "Notification Warning", JOptionPane.WARNING_MESSAGE);
                 }
-                JOptionPane.showMessageDialog(this, "Report status updated successfully.",
+                Report refreshed = reportDAO.findById(reportId);
+                String updatedMsg = refreshed != null ? refreshed.getFormattedUpdatedAt() : "now";
+                JOptionPane.showMessageDialog(this,
+                        "Report status updated successfully.\nUpdated at: " + updatedMsg,
                         "Success", JOptionPane.INFORMATION_MESSAGE);
                 refreshDashboardDataWithLoader("Updating statistics...");
             } else {
@@ -435,7 +505,8 @@ public class AdminDashboard extends JFrame {
             return;
         }
 
-        int reportId = (int) reportsTableModel.getValueAt(selectedRow, 0);
+        int viewRow = reportsTable.convertRowIndexToModel(selectedRow);
+        int reportId = (int) reportsTableModel.getValueAt(viewRow, 0);
         try {
             Report report = reportDAO.findById(reportId);
             if (report == null) {
@@ -460,6 +531,9 @@ public class AdminDashboard extends JFrame {
 
             JOptionPane.showMessageDialog(this, detailsPanel,
                     "Report Details", JOptionPane.INFORMATION_MESSAGE);
+            unopenedReportIds.remove(reportId);
+            openedReportIds.add(reportId);
+            reportsTable.repaint();
         } catch (MatisenseException e) {
             JOptionPane.showMessageDialog(this,
                     "Error loading report details: " + e.getMessage(),
@@ -708,6 +782,37 @@ public class AdminDashboard extends JFrame {
 
         DefaultTableCellRenderer renderer = (DefaultTableCellRenderer) header.getDefaultRenderer();
         renderer.setHorizontalAlignment(SwingConstants.LEFT);
+
+        if (table == reportsTable) {
+            table.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+                @Override
+                public Component getTableCellRendererComponent(JTable tbl, Object value, boolean isSelected,
+                        boolean hasFocus, int row, int column) {
+                    Component c = super.getTableCellRendererComponent(tbl, value, isSelected, hasFocus, row, column);
+                    int modelRow = tbl.convertRowIndexToModel(row);
+                    Object idObj = reportsTableModel.getValueAt(modelRow, 0);
+                    boolean unopened = idObj instanceof Integer && unopenedReportIds.contains((Integer) idObj);
+                    if (c instanceof JLabel) {
+                        JLabel lbl = (JLabel) c;
+                        String display = value != null ? value.toString() : "";
+                        if (unopened && column == 4) {
+                            display = "New report submitted";
+                            lbl.setForeground(new Color(21, 101, 192));
+                        } else {
+                            lbl.setForeground(Color.BLACK);
+                        }
+                        lbl.setText(display);
+                    }
+                    if (!isSelected) {
+                        c.setBackground(unopened ? new Color(242, 242, 242) : Color.WHITE);
+                    }
+                    if (c instanceof JComponent) {
+                        ((JComponent) c).setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 6));
+                    }
+                    return c;
+                }
+            });
+        }
     }
 
     private JPanel buildDetailPanel(String[][] data, String bodyTitle, String bodyContent) {
@@ -740,5 +845,148 @@ public class AdminDashboard extends JFrame {
         panel.add(Box.createVerticalStrut(8));
         panel.add(bodyScroll);
         return panel;
+    }
+
+    private void applyReportFilters() {
+        if (reportsSorter == null) {
+            return;
+        }
+        String search = searchField.getText() != null ? searchField.getText().trim().toLowerCase() : "";
+        String status = (String) statusFilter.getSelectedItem();
+        String dateOpt = (String) dateFilter.getSelectedItem();
+        LocalDate today = LocalDate.now();
+
+        reportsSorter.setRowFilter(new RowFilter<DefaultTableModel, Integer>() {
+            @Override
+            public boolean include(Entry<? extends DefaultTableModel, ? extends Integer> entry) {
+                String type = entry.getStringValue(2).toLowerCase();
+                String location = entry.getStringValue(3).toLowerCase();
+                String summary = entry.getStringValue(4).toLowerCase();
+                String statusVal = entry.getStringValue(5);
+                String created = entry.getStringValue(6);
+                String typeVal = entry.getStringValue(2);
+
+                if (!search.isEmpty() && !(type.contains(search) || location.contains(search) || summary.contains(search))) {
+                    return false;
+                }
+
+                if (status != null && !"All".equals(status) && !statusVal.equals(status)) {
+                    return false;
+                }
+
+                if (dateOpt != null) {
+                    boolean isToday = created != null && created.startsWith(today.toString());
+                    if ("Today (New)".equals(dateOpt) && !isToday) {
+                        return false;
+                    } else if ("Past".equals(dateOpt) && isToday) {
+                        return false;
+                    } else if ("Specific Date".equals(dateOpt)) {
+                        if (specificDateFilter == null) {
+                            return true;
+                        }
+                        if (created == null || !created.startsWith(specificDateFilter.toString())) {
+                            return false;
+                        }
+                    }
+                }
+
+                String selectedType = (String) typeFilter.getSelectedItem();
+                if (selectedType != null && !"All Types".equals(selectedType) && !selectedType.equals(typeVal)) {
+                    return false;
+                }
+                return true;
+            }
+        });
+    }
+
+    private String[] buildStatusFilterOptions() {
+        Report.ReportStatus[] statuses = Report.ReportStatus.values();
+        String[] opts = new String[statuses.length + 1];
+        opts[0] = "All";
+        for (int i = 0; i < statuses.length; i++) {
+            opts[i + 1] = statuses[i].getDisplayName();
+        }
+        return opts;
+    }
+
+    private String[] buildTypeFilterOptions() {
+        String[] opts = new String[REPORT_TYPES.length + 1];
+        opts[0] = "All Types";
+        System.arraycopy(REPORT_TYPES, 0, opts, 1, REPORT_TYPES.length);
+        return opts;
+    }
+
+    private void openDatePicker() {
+        JDialog dialog = new JDialog(this, "Select Date", true);
+        dialog.setSize(300, 150);
+        dialog.setLayout(new BorderLayout(10, 10));
+        dialog.setLocationRelativeTo(this);
+
+        SpinnerDateModel model = new SpinnerDateModel();
+        JSpinner spinner = new JSpinner(model);
+        spinner.setEditor(new JSpinner.DateEditor(spinner, "yyyy-MM-dd"));
+
+        JPanel center = new JPanel();
+        center.add(spinner);
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton ok = new JButton("OK");
+        JButton clear = new JButton("Clear");
+        JButton cancel = new JButton("Cancel");
+        buttons.add(clear);
+        buttons.add(cancel);
+        buttons.add(ok);
+
+        dialog.add(center, BorderLayout.CENTER);
+        dialog.add(buttons, BorderLayout.SOUTH);
+
+        ok.addActionListener(e -> {
+            Date selected = model.getDate();
+            if (selected != null) {
+                LocalDate chosen = selected.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+                specificDateFilter = chosen;
+                dateFilter.setSelectedItem("Specific Date");
+                datePickerLabel.setText(chosen.toString());
+                applyReportFilters();
+            }
+            dialog.dispose();
+        });
+
+        clear.addActionListener(e -> {
+            specificDateFilter = null;
+            datePickerLabel.setText("");
+            if ("Specific Date".equals(dateFilter.getSelectedItem())) {
+                dateFilter.setSelectedItem("All Dates");
+            }
+            applyReportFilters();
+            dialog.dispose();
+        });
+
+        cancel.addActionListener(e -> dialog.dispose());
+
+        dialog.setVisible(true);
+    }
+
+    private static class SimpleFilterListener implements DocumentListener {
+        private final Runnable callback;
+
+        private SimpleFilterListener(Runnable callback) {
+            this.callback = callback;
+        }
+
+        @Override
+        public void insertUpdate(DocumentEvent e) {
+            callback.run();
+        }
+
+        @Override
+        public void removeUpdate(DocumentEvent e) {
+            callback.run();
+        }
+
+        @Override
+        public void changedUpdate(DocumentEvent e) {
+            callback.run();
+        }
     }
 }

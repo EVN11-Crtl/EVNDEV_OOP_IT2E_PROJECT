@@ -14,6 +14,8 @@ import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.JTableHeader;
+import javax.swing.table.TableRowSorter;
+import javax.swing.RowFilter;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -21,6 +23,9 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
+import java.time.LocalDate;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
 /**
  * Resident Dashboard for submitting reports and viewing announcements
@@ -31,6 +36,14 @@ public class ResidentDashboard extends JFrame {
     private static final Color PRIMARY_COLOR = new Color(21, 101, 192);
     private static final Color LIGHT_BG = new Color(245, 247, 250);
     private static final Color TABLE_HEADER = new Color(227, 242, 253);
+    private static final String[] REPORT_TYPES = {
+            "Infrastructure Issue",
+            "Security Concern",
+            "Environmental Problem",
+            "Noise Complaint",
+            "Public Service Request",
+            "Other"
+    };
     private User currentUser;
     private ReportDAO reportDAO;
     private AnnouncementDAO announcementDAO;
@@ -41,6 +54,11 @@ public class ResidentDashboard extends JFrame {
     private JTabbedPane tabbedPane;
     private JTable myReportsTable;
     private DefaultTableModel myReportsTableModel;
+    private TableRowSorter<DefaultTableModel> reportsSorter;
+    private JTextField searchField;
+    private JComboBox<String> statusFilter;
+    private JComboBox<String> dateFilter;
+    private JComboBox<String> typeFilter;
     private JTable announcementsTable;
     private DefaultTableModel announcementsTableModel;
     
@@ -76,8 +94,8 @@ public class ResidentDashboard extends JFrame {
         private final Object[] rowData;
         
         private ReportRow(int id, String type, String location, String descriptionPreview,
-                          String status, String createdAt) {
-            this.rowData = new Object[]{id, type, location, descriptionPreview, status, createdAt};
+                          String status, String createdAt, String updatedAt) {
+            this.rowData = new Object[]{id, type, location, descriptionPreview, status, createdAt, updatedAt};
         }
     }
     
@@ -214,7 +232,7 @@ public class ResidentDashboard extends JFrame {
         
         // My Reports tab components
         myReportsTableModel = new DefaultTableModel(new String[]{
-            "Report ID", "Type", "Location", "Description", "Status", "Created At"
+            "Report ID", "Type", "Location", "Description", "Status", "Created At", "Updated At"
         }, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -223,9 +241,15 @@ public class ResidentDashboard extends JFrame {
         };
         
         myReportsTable = new JTable(myReportsTableModel);
+        reportsSorter = new TableRowSorter<>(myReportsTableModel);
+        myReportsTable.setRowSorter(reportsSorter);
         myReportsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         myReportsTable.getTableHeader().setReorderingAllowed(false);
         styleTable(myReportsTable);
+        searchField = new JTextField(16);
+        statusFilter = new JComboBox<>(buildStatusFilterOptions());
+        dateFilter = new JComboBox<>(new String[] { "All Dates", "Today (New)", "Past" });
+        typeFilter = new JComboBox<>(buildTypeFilterOptions());
         
         // Announcements tab components
         announcementsTableModel = new DefaultTableModel(new String[]{
@@ -320,6 +344,18 @@ public class ResidentDashboard extends JFrame {
             BorderFactory.createEmptyBorder(10, 10, 10, 10),
             BorderFactory.createLineBorder(new Color(230, 232, 236))
         ));
+        JPanel filterPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        filterPanel.setOpaque(false);
+        filterPanel.add(new JLabel("Search:"));
+        filterPanel.add(searchField);
+        filterPanel.add(new JLabel("Status:"));
+        filterPanel.add(statusFilter);
+        filterPanel.add(new JLabel("Date:"));
+        filterPanel.add(dateFilter);
+        filterPanel.add(new JLabel("Type:"));
+        filterPanel.add(typeFilter);
+        filterPanel.add(refreshButton);
+        reportsPanel.add(filterPanel, BorderLayout.NORTH);
         reportsPanel.add(new JScrollPane(myReportsTable), BorderLayout.CENTER);
         tabbedPane.addTab("My Reports", reportsPanel);
         
@@ -330,6 +366,7 @@ public class ResidentDashboard extends JFrame {
         myReportsTable.getColumnModel().getColumn(3).setPreferredWidth(200);
         myReportsTable.getColumnModel().getColumn(4).setPreferredWidth(100);
         myReportsTable.getColumnModel().getColumn(5).setPreferredWidth(150);
+        myReportsTable.getColumnModel().getColumn(6).setPreferredWidth(160);
     }
     
     /**
@@ -514,6 +551,10 @@ public class ResidentDashboard extends JFrame {
                 loadDashboardDataWithLoader("Refreshing your data...");
             }
         });
+        searchField.getDocument().addDocumentListener(new SimpleFilterListener(this::applyReportFilters));
+        statusFilter.addActionListener(e -> applyReportFilters());
+        dateFilter.addActionListener(e -> applyReportFilters());
+        typeFilter.addActionListener(e -> applyReportFilters());
         
         notificationsButton.addActionListener(new ActionListener() {
             @Override
@@ -626,7 +667,8 @@ public class ResidentDashboard extends JFrame {
                 report.getLocation(),
                 preview,
                 report.getStatus().getDisplayName(),
-                report.getFormattedCreatedAt()
+                report.getFormattedCreatedAt(),
+                report.getFormattedUpdatedAt()
             ));
         }
         
@@ -647,6 +689,7 @@ public class ResidentDashboard extends JFrame {
         for (ReportRow row : data.reportRows) {
             myReportsTableModel.addRow(row.rowData);
         }
+        applyReportFilters();
         
         announcementsTableModel.setRowCount(0);
         for (AnnouncementRow row : data.announcementRows) {
@@ -728,7 +771,8 @@ public class ResidentDashboard extends JFrame {
                     {"Type", report.getReportType()},
                     {"Location", report.getLocation()},
                     {"Status", report.getStatus().getDisplayName()},
-                    {"Created", report.getFormattedCreatedAt()}
+                    {"Created", report.getFormattedCreatedAt()},
+                    {"Updated", report.getFormattedUpdatedAt()}
                 };
                 
                 JPanel detailsPanel = buildDetailPanel(data, "Description", report.getDescription());
@@ -839,6 +883,91 @@ public class ResidentDashboard extends JFrame {
     private void openNotifications() {
         NotificationPanel notificationPanel = new NotificationPanel(currentUser);
         notificationPanel.setVisible(true);
+    }
+
+    private void applyReportFilters() {
+        if (reportsSorter == null) {
+            return;
+        }
+        String search = searchField.getText() != null ? searchField.getText().trim().toLowerCase() : "";
+        String status = (String) statusFilter.getSelectedItem();
+        String dateOpt = (String) dateFilter.getSelectedItem();
+        LocalDate today = LocalDate.now();
+
+        reportsSorter.setRowFilter(new RowFilter<DefaultTableModel, Integer>() {
+            @Override
+            public boolean include(Entry<? extends DefaultTableModel, ? extends Integer> entry) {
+                String type = entry.getStringValue(1).toLowerCase();
+                String location = entry.getStringValue(2).toLowerCase();
+                String summary = entry.getStringValue(3).toLowerCase();
+                String statusVal = entry.getStringValue(4);
+                String created = entry.getStringValue(5);
+                String typeVal = entry.getStringValue(1);
+
+                if (!search.isEmpty() && !(type.contains(search) || location.contains(search) || summary.contains(search))) {
+                    return false;
+                }
+
+                if (status != null && !"All".equals(status) && !statusVal.equals(status)) {
+                    return false;
+                }
+
+                if (dateOpt != null) {
+                    boolean isToday = created != null && created.startsWith(today.toString());
+                    if ("Today (New)".equals(dateOpt) && !isToday) {
+                        return false;
+                    } else if ("Past".equals(dateOpt) && isToday) {
+                        return false;
+                    }
+                }
+
+                String selectedType = (String) typeFilter.getSelectedItem();
+                if (selectedType != null && !"All Types".equals(selectedType) && !selectedType.equals(typeVal)) {
+                    return false;
+                }
+                return true;
+            }
+        });
+    }
+
+    private String[] buildStatusFilterOptions() {
+        Report.ReportStatus[] statuses = Report.ReportStatus.values();
+        String[] opts = new String[statuses.length + 1];
+        opts[0] = "All";
+        for (int i = 0; i < statuses.length; i++) {
+            opts[i + 1] = statuses[i].getDisplayName();
+        }
+        return opts;
+    }
+    
+    private String[] buildTypeFilterOptions() {
+        String[] opts = new String[REPORT_TYPES.length + 1];
+        opts[0] = "All Types";
+        System.arraycopy(REPORT_TYPES, 0, opts, 1, REPORT_TYPES.length);
+        return opts;
+    }
+
+    private static class SimpleFilterListener implements DocumentListener {
+        private final Runnable callback;
+
+        private SimpleFilterListener(Runnable callback) {
+            this.callback = callback;
+        }
+
+        @Override
+        public void insertUpdate(DocumentEvent e) {
+            callback.run();
+        }
+
+        @Override
+        public void removeUpdate(DocumentEvent e) {
+            callback.run();
+        }
+
+        @Override
+        public void changedUpdate(DocumentEvent e) {
+            callback.run();
+        }
     }
     
     /**

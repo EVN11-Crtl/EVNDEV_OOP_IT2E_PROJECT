@@ -67,14 +67,20 @@ public class ValidationUtil {
     
     /**
      * Validate password strength
+     * Requirements: min 8 chars, 1 upper, 1 lower, 1 digit, 1 special character
      * @param password Password to validate
-     * @return true if valid (min 6 chars), false otherwise
+     * @return true if valid, false otherwise
      */
     public static boolean isValidPassword(String password) {
         if (password == null || password.trim().isEmpty()) {
             return false;
         }
-        return password.length() >= 6;
+        String pwd = password.trim();
+        boolean hasUpper = pwd.chars().anyMatch(Character::isUpperCase);
+        boolean hasLower = pwd.chars().anyMatch(Character::isLowerCase);
+        boolean hasDigit = pwd.chars().anyMatch(Character::isDigit);
+        boolean hasSpecial = pwd.chars().anyMatch(ch -> !Character.isLetterOrDigit(ch));
+        return pwd.length() >= 8 && hasUpper && hasLower && hasDigit && hasSpecial;
     }
     
     /**
